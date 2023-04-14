@@ -10,9 +10,6 @@ import sys
 benDir = sys.argv[1]
 attDir = sys.argv[2]
 evDir = sys.argv[3]
-#benDir = '/shared/projects/2016-streamspot-dataset/raw-stap-outputs/stap_outputs/continuousParser/processedFiles/files3741Clone/trainGraphs'
-#attDir = '/shared/projects/2016-streamspot-dataset/raw-stap-outputs/stap_outputs/continuousParser/processedFiles/files3741Clone/attackGraphs'
-#evDir = f'/shared/projects/2016-streamspot-dataset/raw-stap-outputs/stap_outputs/continuousParser/processedFiles/files3741Clone/partial/{nk}'
 
 benFL = glob.glob(f"{benDir}/*")[:]
 attFL = glob.glob(f"{attDir}/*")[:]
@@ -35,7 +32,7 @@ else:
     torch.save((pathThreshold, graphThreshold, benPaths, attPaths, attCaught), 'results.pth')
 
 evPaths, evFreqDB = pathsWrapper.generate(evFL, freqDB)
-evPaths, allEvPaths = thresholdWrapper.getScoreWrapper(evPaths, evFreqDB, f'ev-{nk}')
+evPaths, allEvPaths = thresholdWrapper.getScoreWrapper(evPaths, evFreqDB, 'ev')
 
 evPaths, evCaught = thresholdWrapper.prune(allEvPaths, pathThreshold, evPaths) 
 

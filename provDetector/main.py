@@ -1,5 +1,4 @@
 from freqDB import *
-from anomalyScore import *
 import os
 import sys
 # flow of graph
@@ -12,12 +11,10 @@ import sys
 trainFilePath = sys.argv[1]
 testFilePath = sys.argv[2]
 kname = sys.argv[1]
-def main():
+def main(names = ("sourceId", "sourceType", "destinationId", "destinationType", "syscal","processName", "retTime", "pid", "arg1", "arg2", "graphId")):
     #1. generate a frequency database
     print("reading datasets")
-    df_train, dfList_train, graphNames_train = \
-        readPandasFile(trainFilePath,names=("sourceId", "sourceType", "destinationId",
-                                            "destinationType", "syscal","processName", "retTime", "pid", "arg1", "arg2", "graphId"), sep=',')
+    df_train, dfList_train, graphNames_train = readPandasFile(trainFilePath,names=names, sep=',')
     if not os.path.isfile('freqList.data') or not os.path.isfile('setOfsets.data'): # running this in all cases
         print("generating freq db")
         freqDict, setOfsets = createFreqDict(dfList_train, graphNames_train, 10, fRow=False)
@@ -28,7 +25,7 @@ def main():
     #2. assign a anomaly score to each edge
     print("testing and extracting kpaths")
     kPathsPerGraph = []
-    df_test, dfList_test, graphNames_test = readPandasFile(testFilePath, names=("sourceId", "sourceType", "destinationId", "destinationType", "syscal","processName", "retTime", "pid",  "arg1", "arg2", "graphId"), sep=',')
+    df_test, dfList_test, graphNames_test = readPandasFile(testFilePath, names=names, sep=',')
     freqDict = readFromFile('freqList.data')
     setOfsets = readFromFile('setOfsets.data')
     graphs = seperate(df_test)

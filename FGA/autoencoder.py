@@ -14,25 +14,32 @@ from torch_geometric.nn import ARGVA
 import sys
 
 nz = sys.argv[1]
+homePath = sys.argv[2]
+trainStartGraphID = sys.argv[3]
+trainEndGraphID = sys.argv[4]
+doTrain = sys.argv[5]
+testStart = sys.argv[6]
+testEnd = sys.argv[7]
 
 dataset = Planetoid("\..", "CiteSeer", transform=T.NormalizeFeatures())
 dataset.data
 data = dataset[0]
 data.train_mask = data.val_mask = data.test_mask = None
 
-doc2vec = 'doc2vec'
-removeWeird = True
-data, classes, names, rootNames = loadFiles2.loadFiles(data, 'all', -1, rootAdj=False,  versioned=False, mimi=False, createAdv=False, isTensor = False, dataSetType = 'EV')
+data, names  = loadFiles2.loadFilesLarge(data, homePath)
 do_train = False
 x_mask = torch.Tensor(list(range(data.x.shape[0])))
 if do_train:
     start = None
     end = None
+    flag = False
     for i in range(len(names)):
-        if names[i][-1] == 300:
+        if names[i][-1] == trainStartGraphID:
             if start is None:
                 start = i-1
-        if names[i][-1] == 374:
+        if names[i][-1] == trainEndGraphID:
+            flag = True
+        if flag and names[i][-1] != trainEndGraphID:
             end = i
             break
     src = data.edge_index[0][(data.edge_index[0]<end) & (data.edge_index[0]>start)]
@@ -41,7 +48,7 @@ if do_train:
     dest = dest-start-1
     data.edge_index = torch.stack((src,dest), 0)
 
-
+#we do this because we can't embed anything in the streamSpot dataset
 proc = []
 fil = []
 soc = []
@@ -71,7 +78,6 @@ fil_feat[fil_feat == 1] = 3
 data.x[proc] = proc_feat
 data.x[fil] = fil_feat
 data.x[soc] = soc_feat
-# here get in streamspot dataset
 
 class Encoder(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels):
@@ -172,7 +178,7 @@ if do_train:
         print(loss)
     torch.save(model, 'autoencoder2.pth')
 else:
-    graphs = list(range(500,700))
+    graphs = list(range(testStart, testEnd))
     for graph in graphs:
         x = data.x.to(device)
         g_edge_index, start, end = findEdges(graph, data)
@@ -184,4 +190,4 @@ else:
             embeddings = z
         else:
             embeddings = torch.cat((embeddings, z), 0)
-    torch.save(embeddings,'evGraphEmbed-{nz}.pth')
+    torch.save(embeddings,'graphEmbed-{nz}.pth')
