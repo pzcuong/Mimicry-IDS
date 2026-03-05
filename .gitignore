@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# PyTorch model checkpoints
+*.pth
+*.pt
+*.ckpt
+
+# Pickle / serialized data
+*.data
+*.pkl
+*.pickle
+
+# Generated / processed output
+processedFiles/
+*.csv
+!*.csv.example
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Extracted dataset files (can be large, regenerate from zips)
+_extracted/
+
+# Dataset zip archives (large files — keep tracked or use Git LFS)
+# Comment these out if you want to track the zips
+# *.zip
