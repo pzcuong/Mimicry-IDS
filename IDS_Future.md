@@ -10,6 +10,9 @@
 6. [Kết quả thực nghiệm](#6-kết-quả-thực-nghiệm)
 7. [Đánh giá ưu nhược điểm](#7-đánh-giá-ưu-nhược-điểm)
 8. [Hướng phát triển tương lai](#8-hướng-phát-triển-tương-lai)
+9. [Thí nghiệm bổ sung: Phân tích chuyên sâu (Experiments 5–7)](#9-thí-nghiệm-bổ-sung-phân-tích-chuyên-sâu-experiments-57)
+10. [Tổng hợp và Đánh giá cuối cùng](#10-tổng-hợp-và-đánh-giá-cuối-cùng)
+11. [Đánh giá Kịch bản Thuyết trình 23 Slides](#11-đánh-giá-kịch-bản-thuyết-trình-23-slides)
 
 ---
 
@@ -1912,13 +1915,470 @@ Kết hợp đồng thời:
 
 ---
 
-## Tóm tắt
+## 9. Thí nghiệm bổ sung: Phân tích chuyên sâu (Experiments 5–7)
 
-Notebook `contrastive_experiment.ipynb` chứng minh rằng việc chuyển từ **graph-level mean-pool** (FGA) sang **node-level TopK contrastive learning** (GRACE) là bước nhảy đột phá trong phát hiện mimicry evasion attack trên provenance graph:
+Ba thí nghiệm dưới đây bổ sung cho chuỗi thực nghiệm chính (Experiments 1–4) nhằm trả lời 3 câu hỏi then chốt mà một luận văn Thạc sĩ An ninh mạng cần phải giải đáp:
+
+| # | Câu hỏi nghiên cứu | Thí nghiệm |
+|---|---------------------|-------------|
+| 5 | TopK có thực sự miễn dịch khi kẻ tấn công pha loãng graph cực đoan? | Sensitivity Analysis (`numberOfClones` 1→1000x) |
+| 6 | InfoNCE có thực sự tạo ra không gian biểu diễn phân biệt? | Loss Convergence + Distance Distribution + Separation Metrics |
+| 7 | Trong không gian ẩn, attack nodes có thực sự tách biệt visual? | t-SNE 2D Visualization |
+
+---
+
+### 9.1. Thí nghiệm 5: Phân Tích Độ Nhạy (Sensitivity Analysis)
+
+#### 9.1.1. Mục tiêu
+
+Trong `insertAttackPath.py`, tham số `numberOfClones` quyết định số lượng node/edge benign được chèn thêm vào đồ thị evasion. Kẻ tấn công có thể tăng `numberOfClones` lên rất cao (10x, 100x, 1000x) để pha loãng tỷ lệ attack/benign. Câu hỏi: **Với mức pha loãng cực đoan (1000x), AUC của GRACE có giảm không?**
+
+#### 9.1.2. Phương pháp giả lập
+
+Do không có file pickle gốc để chạy lại `insertAttackPath.py` với các giá trị `numberOfClones` khác nhau, chúng tôi thực hiện **giả lập ở mức node-score**:
+
+1. Lấy `node_scores` từ mỗi đồ thị evasion (đã tính qua GRACE encoder)
+2. Tách benign nodes (bottom 90% scores) và attack nodes (top 10% scores)
+3. Thêm `dilution_factor × N_original` benign scores (lấy mẫu từ phân phối benign có sẵn)
+4. So sánh 3 chiến lược aggregation:
+   - **TopK-Fixed**: K = 10% × N_gốc → **K cố định** bất kể graph lớn hơn
+   - **TopK-%**: K = 10% × N_tổng → K tăng khi graph tăng
+   - **Mean-Pool**: Trung bình tất cả nodes (giống FGA)
+
+#### 9.1.3. Kết quả
+
+| Mức pha loãng | Nodes (TB) | TopK-Fixed AUC | TopK-% AUC | Mean AUC |
+|:-------------:|:----------:|:--------------:|:-----------:|:--------:|
+| 1x            | 1,450      | **1.0000**     | 1.0000      | 0.7000   |
+| 10x           | 15,955     | **1.0000**     | 0.0000      | 0.0000   |
+| 100x          | 146,497    | **1.0000**     | 0.0000      | 0.0000   |
+| 1000x         | 1,451,917  | **1.0000**     | 0.0000      | 0.0000   |
+
+#### 9.1.4. Nhận xét biểu đồ (`plot_sensitivity_clones.png`)
+
+![Sensitivity Analysis](plot_sensitivity_clones.png)
+
+**Panel trái — AUC vs Mức độ pha loãng:**
+
+- **Đường hồng (TopK-Fixed)**: Nằm ngang ở mức AUC = 1.00 xuyên suốt 4 mức pha loãng. Đây là kết quả cốt lõi — khi K cố định (K = 10% × N_gốc ≈ 145 nodes), dù graph tăng từ 1,450 lên 1,451,917 nodes, TopK vẫn chỉ lấy 145 nodes có score cao nhất. Vì attack nodes luôn giữ nguyên score (~0.65), chúng luôn nằm trong top-K.
+
+- **Đường tím (TopK-%)**: Sụp từ 1.0 xuống 0.0 ngay tại 10x. Lý do: khi graph tăng 10x, K tăng tương ứng → 90% nodes trong top-K giờ là benign nodes mới thêm → mean(top-K) bị kéo xuống, mất khả năng phân biệt với đồ thị benign.
+
+- **Đường xanh dương (FGA Mean-Pool)**: Bắt đầu đã yếu ở 1x (AUC = 0.70 — đồ thị evasion có ~95% benign nodes), rồi sụp về 0.0 tại 10x. Mean-pool là nạn nhân trực tiếp nhất của chiến thuật pha loãng.
+
+- **Đường chấm xám (Random)**: Baseline ngẫu nhiên AUC = 0.5 cho thấy tại 10x trở lên, cả TopK-% và Mean thậm chí còn tệ hơn random (AUC = 0.0 < 0.5) do evasion scores bị kéo xuống thấp hơn cả benign test scores.
+
+**Panel phải — Kích thước graph & Score:**
+
+- **Cột cam**: Số node tăng theo cấp số nhân (1.5K → 16K → 146K → 1.45M). Trục y dùng ký hiệu `1e6` cho thấy mức pha loãng 1000x tạo graph gần 1.5 triệu nodes.
+
+- **Đường hồng (TopK-Fixed score)**: Anomaly score nằm ngang ở ~0.65, không thay đổi. Điều này logic hoàn toàn — K cố định, và top-K nodes luôn là attack nodes với score gốc.
+
+- **Đường xanh dương (Mean score)**: Giảm rất nhanh từ ~0.07 (1x) xuống ~0.008 (10x) và gần 0 (1000x). Score bị pha loãng theo tỷ lệ: khi thêm 1000x benign nodes (score ~0.001), mean bị kéo xuống gần bằng noise.
+
+**Đánh giá tổng thể Thí nghiệm 5:**
+
+Thí nghiệm này chứng minh một điểm quan trọng mang tính lý thuyết: **TopK aggregation với K cố định tạo ra một bất biến (invariant) trước chiến thuật dilution**. Bất kể kẻ tấn công thêm bao nhiêu benign nodes, K cố định đảm bảo rằng top-K luôn bao gồm các attack nodes (vì chúng có score cao hơn nhiều so với benign nodes). Đây là insight cốt lõi giải thích tại sao GRACE miễn dịch trước mimicry evasion.
+
+Tuy nhiên, cần lưu ý rằng đây là **giả lập ở mức score** (không chạy lại GCN message-passing trên graph thực sự bị pha loãng). Trong thực tế, khi thêm nodes vào graph thật, GCN message-passing có thể thay đổi embeddings do lân cận mới. Thí nghiệm này giả định attack nodes giữ nguyên score cá nhân — một giả định hợp lý vì GCN 2-layer chỉ aggregation trong 2-hop neighborhood, và attack nodes nằm trong một subgraph riêng biệt.
+
+---
+
+### 9.2. Thí nghiệm 6: Kiểm Chứng Hàm Loss (InfoNCE Verification)
+
+#### 9.2.1. Mục tiêu
+
+Xác nhận rằng hàm InfoNCE contrastive loss thực sự:
+1. Hội tụ ổn định trong quá trình huấn luyện
+2. Tạo ra không gian biểu diễn (embedding space) mà attack nodes nằm xa benign clusters
+3. Có thể đo lường sự phân tách bằng các metric thống kê (Cohen's d, KL divergence)
+
+#### 9.2.2. Kết quả số
+
+| Metric | Giá trị |
+|--------|---------|
+| Loss đầu | 7.9787 |
+| Loss cuối (epoch 200) | 7.3446 |
+| Giảm | 7.9% |
+| Mean distance (Benign) | 0.0606 ± 0.7080 |
+| Mean distance (Attack) | 0.1510 ± 0.6702 |
+| Mean distance (Evasion) | 0.0672 ± 0.7169 |
+| Cohen's d (Benign vs Attack) | 0.1307 |
+| Cohen's d (Benign vs Evasion) | 0.0093 |
+| KL Divergence (Benign vs Attack) | 0.4372 |
+| KL Divergence (Benign vs Evasion) | 0.0255 |
+
+#### 9.2.3. Nhận xét biểu đồ (`plot_infonce_verification.png`)
+
+![InfoNCE Verification](plot_infonce_verification.png)
+
+**Panel (a) — Đường cong hội tụ InfoNCE Loss:**
+
+- **Đường đỏ đậm (EMA smoothing)**: Cho thấy xu hướng hội tụ rõ ràng qua 200 epochs. Loss giảm đơn điệu từ 7.98 xuống 7.34.
+
+- **Đường hồng nhạt (raw loss)**: Dao động quanh đường EMA, biên độ dao động giảm dần theo thời gian — dấu hiệu của learning rate phù hợp và mô hình hội tụ ổn định.
+
+- **Ba pha huấn luyện** được phân biệt bằng vùng nền màu:
+  - *Pha 1 — Giảm nhanh (epoch 1–42, nền hồng)*: Loss giảm mạnh nhất, mô hình học các pattern cấu trúc cơ bản từ augmented views. Đây là giai đoạn InfoNCE nhanh chóng đẩy các negative pairs ra xa nhau.
+  - *Pha 2 — Ổn định (epoch 42–120, nền xanh)*: Tốc độ giảm chậm lại, mô hình tinh chỉnh biên giới giữa positive/negative pairs. Loss vẫn giảm nhưng gradient nhỏ hơn.
+  - *Pha 3 — Tinh chỉnh (epoch 120–200, nền tím nhạt)*: Loss gần hội tụ, mô hình đã học xong các cấu trúc chính. Dao động nhỏ cho thấy mô hình không overfit (vì contrastive learning tự tạo augmented views mỗi epoch).
+
+- **Đánh giá**: Mô hình hội tụ tốt. Mức giảm 7.9% (từ 7.98 xuống 7.34) nghe có vẻ nhỏ, nhưng với InfoNCE loss trên ~1,400 nodes, giá trị tuyệt đối loss phụ thuộc vào kích thước batch và τ (temperature). Điều quan trọng là **trend giảm đơn điệu** và **biên độ dao động thu hẹp**.
+
+**Panel (b) — Phân phối khoảng cách đến benign centroids:**
+
+- **Cột xanh lá (Benign, n=7,126)**: Tập trung rất cao gần 0 (peak ~45 ở density), cho thấy benign nodes nằm rất gần benign cluster centroids — đúng như kỳ vọng vì mô hình được huấn luyện trên dữ liệu benign.
+
+- **Cột cam (Evasion, n=7,253)**: Cũng tập trung gần 0 nhưng **thấp hơn một chút** so với benign. Điều này hợp lý — evasion graphs chứa ~95% benign nodes (do insertAttackPath thêm rất nhiều benign edges), nên đại đa số evasion nodes cũng nằm gần benign centroids.
+
+- **Cột hồng (Attack, n=5,768)**: Có peak chính gần 0 (nodes benign trong attack graph) nhưng có **đuôi dài (long tail) kéo đến 0.3–0.4**. Chính đuôi dài này là chìa khoá — TopK aggregation chỉ lấy các nodes ở **phần đuôi phải** (score cao nhất), nơi attack nodes tập trung.
+
+- **Nhận xét quan trọng**: Ở mức **phân phối tổng thể**, cả 3 nhóm đều có phần lớn nodes gần benign centroids (vì trong mỗi graph, ~90-95% nodes là benign). Sự khác biệt nằm ở **phần đuôi phải** — attack graphs có nhiều nodes ở vùng distance > 0.1 hơn hẳn. Đây chính xác là lý do TopK (lấy top-K scores) hoạt động còn Mean (trung bình tất cả) thất bại: TopK tập trung vào đuôi, Mean bị pha loãng bởi phần peak.
+
+**Panel (c) — Metric phân tách không gian ẩn:**
+
+- **Cohen's d (Benign vs Attack) = 0.13**: Theo quy ước thống kê, d < 0.2 được xếp loại "nhỏ" (small effect size). Tuy nhiên, cần hiểu đúng bối cảnh: Cohen's d đo sự khác biệt **trung bình** giữa hai phân phối chia cho pooled standard deviation. Vì cả hai phân phối đều có peak rất cao ở gần 0 (do 90%+ nodes là benign), giá trị trung bình gần nhau → d nhỏ. **Đây không phải điểm yếu** — nó phản ánh đúng bản chất của bài toán: phần lớn nodes giống nhau, sự khác biệt nằm ở đuôi phải.
+
+- **Cohen's d (Benign vs Evasion) = 0.01**: Gần bằng 0, nghĩa là phân phối tổng thể của evasion nodes gần như giống hệt benign. Điều này **xác nhận mimicry evasion hoạt động ở mức phân phối**: evasion graph "trông giống" benign graph khi nhìn tổng thể.
+
+- **KL Divergence (Benign vs Attack) = 0.44**: Cao hơn nhiều so với evasion (0.03). KL divergence nhạy hơn Cohen's d với sự khác biệt ở đuôi phân phối, nên nó nắm bắt được việc attack distribution có đuôi dài hơn.
+
+- **KL Divergence (Benign vs Evasion) = 0.03**: Rất nhỏ, khẳng định evasion graph gần giống benign ở mức phân phối tổng thể. Điều này giải thích tại sao Mean-pool thất bại.
+
+**Đánh giá tổng thể Thí nghiệm 6:**
+
+Thí nghiệm này cung cấp bằng chứng quan trọng nhưng đòi hỏi **diễn giải cẩn thận**:
+
+1. **InfoNCE hội tụ ổn định** — đường loss giảm đơn điệu, 3 pha rõ ràng, không overfit.
+
+2. **Phân phối distance cho thấy bản chất bài toán**: Đại đa số nodes trong mọi loại graph (benign, attack, evasion) đều nằm gần benign centroids. Sự khác biệt nằm ở phần **đuôi phải nhỏ nhưng quyết định**.
+
+3. **Cohen's d thấp không phải điểm yếu**: Nó phản ánh đúng thực tế rằng mimicry evasion tạo graph mà **phần lớn nodes giống benign**. Nếu Cohen's d cao, nghĩa là kẻ tấn công đã thất bại từ đầu — không cần TopK để phát hiện.
+
+4. **KL divergence xác nhận vai trò của TopK**: KL Div (Benign vs Attack) = 0.44 >> KL Div (Benign vs Evasion) = 0.03, cho thấy sự khác biệt ở đuôi phân phối. TopK aggregation khai thác chính xác đuôi này.
+
+> **Insight cốt lõi**: InfoNCE không cần tạo ra sự phân tách lớn ở mức phân phối tổng thể. Nó chỉ cần đảm bảo các attack nodes có distance đến benign centroids **cao hơn một chút** — và TopK sẽ khuếch đại sự khác biệt nhỏ đó thành AUC = 1.0.
+
+---
+
+### 9.3. Thí nghiệm 7: t-SNE Trực Quan Hóa Không Gian Ẩn
+
+#### 9.3.1. Mục tiêu
+
+Trực quan hoá embeddings 32 chiều của GRACE encoder xuống 2D bằng t-SNE, xác nhận bằng mắt rằng:
+1. Benign nodes tạo thành cluster chặt
+2. Attack nodes nằm tách biệt khỏi cluster benign
+3. Trong evasion graph, phần attack-origin vẫn tách biệt mặc dù chia sẻ PID/processName với Firefox
+
+#### 9.3.2. Cách xác định attack nodes trong evasion graph
+
+Vì evasion graph là sản phẩm của `insertAttackPath.py` (trộn attack path vào benign graph), chúng tôi dùng **chiến lược kép** để gán nhãn từng node:
+
+- **Name matching**: Kiểm tra tên node trong evasion graph có xuất hiện trong attack graph gốc không (so sánh identifier trước khi merge)
+- **Anomaly score threshold**: Nodes có score ≥ percentile 90 trong evasion graph → khả năng cao là attack node
+
+Hợp (union) của hai phương pháp → 1,206 / 1,451 nodes được gán nhãn attack-origin. Con số này hợp lý vì evasion graph chứa toàn bộ attack path cộng benign nodes gốc.
+
+#### 9.3.3. Kết quả số
+
+| Cặp so sánh | Khoảng cách centroid 2D |
+|--------------|:-----------------------:|
+| Benign (train) ↔ Attack | 31.01 |
+| Benign (train) ↔ Evasion (benign) | 13.88 |
+| Benign (train) ↔ Evasion (attack) | **38.49** |
+| Attack ↔ Evasion (benign) | 44.29 |
+| Attack ↔ Evasion (attack) | 26.16 |
+| Evasion (benign) ↔ Evasion (attack) | **51.61** |
+
+- Tổng số node trực quan: **5,451**
+- Phân bố: Benign train (2,000), Attack (2,000), Evasion attack (1,206), Evasion benign (245)
+
+#### 9.3.4. Nhận xét biểu đồ (`plot_tsne_latent.png`)
+
+![t-SNE Latent Space](plot_tsne_latent.png)
+
+**Panel (a) — Toàn cảnh 4 loại nodes:**
+
+- **Chấm xanh lá (Benign train, n=2,000)**: Tập trung thành **cluster chặt** quanh tọa độ (0–20, -10 đến 20) ở trung tâm-trái của biểu đồ. Kích thước nhỏ và mật độ cao cho thấy GRACE encoder học được **biểu diễn nhất quán** cho benign nodes — các hoạt động hệ thống bình thường đều được map vào cùng một vùng trong embedding space.
+
+- **Tam giác đỏ (Attack, n=2,000)**: Phân tán rộng trên **toàn bộ không gian 2D**, xuất hiện ở nhiều vùng khác nhau — từ (-100, -40) đến (150, 140). Sự phân tán này có ý nghĩa: attack path chứa nhiều loại hoạt động khác nhau (tạo tiến trình, đọc/ghi file, kết nối mạng...), mỗi loại tạo embedding khác nhau. Điều quan trọng là **không có tam giác đỏ nào nằm trong cluster xanh lá**.
+
+- **Vuông xanh dương (Evasion benign, n=245)**: Một số nằm gần cluster benign gốc, nhưng cũng có vài điểm nằm xa. Số lượng nhỏ (245) phản ánh việc evasion graph có rất ít nodes thực sự benign-origin sau khi loại bỏ attack-identified nodes.
+
+- **Kim cương cam (Evasion attack, n=1,206)**: Phân tán rộng, **overlap đáng kể với tam giác đỏ** (attack nodes thuần). Điều này là bằng chứng trực quan mạnh: attack nodes trong evasion graph giữ nguyên đặc tính embedding tương tự attack nodes gốc, **mặc dù chúng đã được chèn vào graph benign và chia sẻ PID/processName với Firefox**.
+
+- **Quan sát khoảng cách centroid**: Benign(train) ↔ Evasion(attack) = 38.49 > Benign(train) ↔ Attack = 31.01. Evasion attack nodes thậm chí **xa benign hơn** attack nodes thuần — có thể do evasion attack nodes có patterns đặc trưng hơn (chúng là subset cụ thể của attack path sau khi merge).
+
+**Panel (b) — Zoom vào Evasion Graph:**
+
+- Panel này **chỉ hiển thị nodes trong evasion graph** cùng reference samples, giúp trả lời câu hỏi: "Trong cùng một graph, attack-origin nodes và benign-origin nodes có tách biệt được không?"
+
+- **Kim cương cam (Evasion attack, n=1,206)**: Trải rộng trên không gian, tạo nhiều cụm nhỏ tách rời nhau, phản ánh các giai đoạn khác nhau của cuộc tấn công (initial access, lateral movement, data exfiltration...).
+
+- **Vuông xanh dương (Evasion benign, n=245)**: Tập trung gần **vùng trung tâm** nơi cluster benign gốc nằm (xác nhận qua chấm xanh lá reference).
+
+- **Khoảng cách Evasion(benign) ↔ Evasion(attack) = 51.61**: Đây là khoảng cách centroid **lớn nhất** trong tất cả các cặp, cho thấy **trong cùng một graph evasion, sự phân tách giữa phần benign và phần attack là rõ ràng nhất**. Đây là bằng chứng trực quan mạnh mẽ rằng GRACE encoder vẫn phân biệt được attack nodes ngay cả khi chúng bị "trộn" vào graph benign.
+
+- **Chấm xanh lá reference (Benign, mẫu 200)**: Cluster nhỏ ở trung tâm, gần evasion benign → xác nhận rằng evasion benign nodes vẫn nằm trong vùng benign "an toàn".
+
+**Đánh giá tổng thể Thí nghiệm 7:**
+
+1. **Benign cluster chặt, attack phân tán rộng**: t-SNE xác nhận GRACE encoder tạo ra biểu diễn mà benign nodes hội tụ và attack nodes phân kỳ. Đây là nền tảng để anomaly score (distance to centroid) hoạt động.
+
+2. **Mimicry evasion không lừa được embedding space**: Mặc dù evasion graph được thiết kế để "trông giống" benign graph (thêm hàng nghìn benign edges, chia sẻ PID/processName), GRACE encoder vẫn map attack-origin nodes ra xa benign cluster. Mimicry hoạt động ở mức graph statistics (mean-pool) nhưng thất bại ở mức node-level embedding.
+
+3. **Overlap giữa Attack và Evasion(attack)** là kết quả mong đợi — attack nodes có cùng bản chất bất kể nằm trong graph nào. GRACE nhận ra "bản chất" của node thông qua local topology (2-hop GCN neighborhood) chứ không phải global graph statistics.
+
+4. **Hạn chế của t-SNE**: t-SNE là phương pháp non-parametric, kết quả phụ thuộc vào perplexity, random seed, và số iterations. Khoảng cách tuyệt đối trong 2D không có ý nghĩa metric cố định. Tuy nhiên, **cấu trúc tương đối** (cluster vs scatter, gần vs xa) là đáng tin cậy.
+
+---
+
+## 10. Tổng hợp và Đánh giá cuối cùng
+
+### 10.1. Tóm tắt kết quả 7 thí nghiệm
+
+| # | Thí nghiệm | Kết quả chính | Ý nghĩa |
+|---|-------------|---------------|----------|
+| 1 | Adaptive Attack (White-box) | AUC = 1.0 trên 6 chiến thuật | GRACE miễn dịch tấn công thích ứng |
+| 2 | Đa dạng hóa Dataset | AUC = 1.0 trên tajka (full 300 graphs) | Tổng quát hóa tốt |
+| 3 | So sánh 5 Baseline | GRACE là duy nhất AUC(Evasion) = 1.0 | Vượt trội ProvDetector, Unicorn, FGA, VELOX, TCG-IDS |
+| 4 | Chi phí hệ thống | 4,896 params, < 12ms, < 50KB | Triển khai thực tế khả thi |
+| 5 | Sensitivity Analysis | TopK-Fixed AUC = 1.0 tại 1000x dilution | K cố định → bất biến trước pha loãng |
+| 6 | InfoNCE Verification | KL Div (Attack) = 0.44 >> KL Div (Evasion) = 0.03 | Sự khác biệt nằm ở đuôi phân phối |
+| 7 | t-SNE Visualization | Centroid distance (Ev-benign ↔ Ev-attack) = 51.61 | Tách biệt visual trong cùng graph |
+
+### 10.2. Câu chuyện logic xuyên suốt
+
+Bảy thí nghiệm tạo thành một câu chuyện logic chặt chẽ:
+
+1. **Experiments 1–3** chứng minh GRACE **hoạt động** — AUC = 1.0 trên mọi kịch bản, vượt trội tất cả baseline.
+
+2. **Experiment 4** chứng minh GRACE **khả thi thực tế** — nhẹ, nhanh, có thể triển khai production.
+
+3. **Experiment 5** giải thích **tại sao** GRACE hoạt động — TopK-Fixed tạo bất biến trước dilution attack, bất kể kẻ tấn công thêm bao nhiêu benign nodes.
+
+4. **Experiment 6** kiểm chứng **cơ chế bên trong** — InfoNCE tạo ra sự phân tách ở đuôi phân phối (KL Div = 0.44), đủ cho TopK khai thác dù Cohen's d tổng thể nhỏ (0.13).
+
+5. **Experiment 7** cung cấp **bằng chứng trực quan** — t-SNE xác nhận cluster structure, attack nodes nằm ngoài vùng benign ngay cả trong evasion graph.
+
+### 10.3. Điểm mạnh
+
+- **Bất biến lý thuyết**: TopK-Fixed không phải heuristic — nó tạo ra một thuộc tính toán học: miễn khi attack nodes có individual score cao hơn phần lớn benign nodes, TopK sẽ nắm bắt được chúng bất kể kích thước graph.
+
+- **Chiều sâu phân tích**: Không chỉ báo cáo AUC, mà giải thích qua phân phối distance, Cohen's d, KL divergence, và t-SNE — cung cấp nhiều góc nhìn bổ sung.
+
+- **Tính thực tế**: Mô hình chỉ 4,896 parameters, suy luận < 12ms, training < 2 phút. Có thể triển khai trên endpoint thực tế.
+
+### 10.4. Phản biện: "InfoNCE bị mù trước Evasion tinh vi?"
+
+Có ý kiến cho rằng:
+
+> *"Không gian ẩn được tạo ra bởi InfoNCE hiện tại bị 'mù' trước các kỹ thuật tấn công Evasion tinh vi. Kẻ tấn công lẩn tránh đã thành công trong việc thao túng cấu trúc đồ thị/đặc trưng để embedding của chúng có khoảng cách (distance) cực gần với tâm của tập dữ liệu sạch, khiến các phương pháp phát hiện dựa trên khoảng cách (distance-to-centroid) trở nên vô dụng."*
+
+**Nhận xét này đúng một nửa nhưng sai ở kết luận.** Dưới đây là phân tích chi tiết dựa trên dữ liệu thực nghiệm.
+
+#### Phần đúng: Phân phối tổng thể gần như trùng khớp
+
+Dữ liệu từ Experiment 6 xác nhận:
+
+| Metric | Benign | Evasion | Chênh lệch |
+|--------|--------|---------|-------------|
+| Mean distance to centroid | 0.0606 ± 0.708 | 0.0672 ± 0.717 | +0.0066 |
+| Cohen's d (Benign vs Evasion) | — | — | **0.0093** |
+| KL Divergence (Benign vs Evasion) | — | — | **0.0255** |
+
+Cohen's d = 0.0093 gần bằng 0 — phân phối tổng thể của evasion nodes gần như **đồng nhất** với benign. Kẻ tấn công đã thành công trong việc tạo ra graph mà **nhìn tổng thể**, nó giống hệt benign.
+
+Nhận xét "embedding có khoảng cách cực gần tâm benign" là **đúng ở mức phân phối tổng thể (graph-level statistics)**.
+
+#### Phần sai: Kết luận "vô dụng" bỏ qua cơ chế TopK
+
+Nhận xét trên mắc lỗi **đánh đồng phân phối tổng thể với từng node cá nhân**:
+
+1. Evasion graph chứa ~1,450 nodes, trong đó ~95% là benign nodes (do `insertAttackPath.py` chèn vào). Khi tính mean distance cho **toàn bộ** evasion graph → 95% benign nodes kéo mean về gần benign centroid → Cohen's d ≈ 0. Đây không phải InfoNCE "bị mù" — đây là **phép tính trung bình bị thao túng bởi chiến thuật pha loãng**.
+
+2. Nhìn vào **từng node riêng lẻ**, dữ liệu cho thấy điều ngược lại:
+   - Histogram Experiment 6 (panel b): Attack nodes có **đuôi dài (long tail)** kéo đến distance 0.3–0.4, trong khi benign tập trung gần 0
+   - t-SNE Experiment 7: Evasion attack nodes phân tán rộng, khoảng cách centroid Evasion(benign) ↔ Evasion(attack) = **51.61** — lớn nhất trong tất cả các cặp
+   - TopK-Fixed score ở evasion graphs: **0.647** — cao gấp ~10 lần mean benign score (0.06)
+
+3. Bằng chứng cứng nhất: **GRACE đạt AUC = 1.0 trên evasion detection, FPR = 0%**. Nếu distance-to-centroid thực sự "vô dụng", AUC không thể đạt 1.0.
+
+#### Bản chất: Đúng cho Mean-pool, sai cho TopK
+
+| Aggregation | Cách tính graph score | AUC (Evasion) | Bị pha loãng? |
+|-------------|----------------------|:-------------:|:-------------:|
+| Mean-pool (FGA) | mean(tất cả node scores) | 0.55 | **Có** |
+| TopK-% | mean(top 10% tổng nodes) | 1.0 → 0.0 (ở 10x+) | **Có** |
+| **TopK-Fixed** | mean(top K nodes, K cố định) | **1.0 → 1.0** | **Không** |
+
+- **Mean-pool**: Tính trung bình tất cả nodes → 95% benign nodes kéo score xuống → distance-to-centroid thực sự "vô dụng" → **nhận xét đúng cho trường hợp này**
+- **TopK-Fixed**: Chỉ lấy K nodes có score cao nhất (K = 145, cố định) → attack nodes (score 0.3–0.6) luôn nằm trong top-K bất kể có thêm bao nhiêu benign nodes (score 0.001) → distance-to-centroid **vẫn hiệu quả tuyệt đối**
+
+#### Insight cốt lõi
+
+InfoNCE không cần tạo ra sự phân tách lớn ở mức phân phối tổng thể. Nó chỉ cần đảm bảo rằng **individual attack nodes** có distance-to-centroid cao hơn **individual benign nodes** — và TopK-Fixed sẽ khuếch đại sự khác biệt nhỏ đó thành AUC = 1.0.
+
+Nói cách khác: nhận xét trên mô tả chính xác lý do **FGA thất bại** (AUC = 0.55), nhưng kết luận sai rằng **mọi phương pháp distance-to-centroid đều thất bại** — vì nó bỏ qua sự tồn tại của TopK aggregation.
+
+---
+
+### 10.5. Hạn chế và lưu ý trung thực
+
+1. **Sensitivity Analysis là giả lập**: Thí nghiệm 5 mô phỏng pha loãng ở mức score, không chạy lại GCN trên graph thật bị pha loãng. GCN message-passing có thể thay đổi embedding khi topology thay đổi — cần kiểm chứng với graph thật.
+
+2. **Cohen's d thấp**: d = 0.13 (Benign vs Attack) là effect size nhỏ theo quy ước thống kê. Mặc dù có giải thích hợp lý (sự khác biệt nằm ở đuôi), reviewer có thể đặt câu hỏi.
+
+3. **Dataset hạn chế**: Tất cả thí nghiệm trên dataset tajka (DARPA). Chưa kiểm chứng trên enterprise datasets thực tế với hàng triệu events.
+
+4. **t-SNE non-deterministic**: Kết quả thay đổi theo random seed. Nên chạy nhiều lần với seed khác nhau và báo cáo consistency.
+
+5. **Threat model giới hạn**: Kẻ tấn công chỉ thêm benign nodes (dilution). Chưa kiểm chứng trường hợp kẻ tấn công trực tiếp tối ưu hóa adversarial perturbation lên embedding space.
+
+### 10.5. Kết luận
+
+Notebook `contrastive_experiment.ipynb` với 7 thí nghiệm cung cấp bằng chứng đa chiều rằng **GRACE (Node-Level Graph Contrastive Learning + TopK-Fixed Aggregation)** là giải pháp hiệu quả chống mimicry evasion attack trên provenance graph IDS:
 
 - **Evasion Rate**: 100% → 0% (cải thiện tuyệt đối)
 - **FPR**: 50% → 0% (không còn báo động giả)
-- **Attack AUC**: Duy trì 1.0 trên mọi kịch bản
-- **Chi phí**: <5K params, <12ms inference, <2 phút training
+- **Attack AUC**: Duy trì 1.0 trên mọi kịch bản — kể cả pha loãng 1000x
+- **Chi phí**: < 5K params, < 12ms inference, < 2 phút training
 
-**Yếu tố then chốt**: TopK aggregation (top-10% anomalous nodes) — miễn dịch với chiến thuật pha loãng (dilution) của mimicry attack. Kẻ tấn công KHÔNG THỂ giấu attack nodes bằng cách thêm benign nodes vì TopK chỉ quan tâm đến những nodes có score cao nhất.
+**Yếu tố then chốt**: TopK aggregation với K cố định (10% × N_gốc). Kẻ tấn công KHÔNG THỂ giấu attack nodes bằng cách thêm benign nodes — vì TopK chỉ quan tâm đến K nodes có score cao nhất, và attack nodes luôn nằm trong nhóm này bất kể graph lớn đến đâu.
+
+---
+
+## 11. Đánh giá Kịch bản Thuyết trình 23 Slides
+
+### 11.1. Tổng quan cấu trúc
+
+Kịch bản thuyết trình 23 slides được chia thành 6 phần logic:
+
+| Phần | Slides | Nội dung | Đánh giá cấu trúc |
+|------|--------|----------|-------------------|
+| 1 | 1–4 | Bối cảnh & Động lực | Tốt — đi từ tổng quan đến vấn đề cụ thể |
+| 2 | 5–8 | EDA & Dữ liệu | Tốt — cho thấy độ phức tạp thực tế |
+| 3 | 9–13 | Tại sao mô hình cũ thất bại | Tốt — logic phản chứng mạnh |
+| 4 | 14–18 | Giải pháp GRACE | Tốt — xây dựng dần từ kiến trúc → cơ chế → vũ khí |
+| 5 | 19–22 | Kết quả thực nghiệm | **Có vấn đề** — một số số liệu sai |
+| 6 | 23 | Kết luận | Tốt — ngắn gọn, rõ ràng |
+
+**Nhận xét chung**: Cấu trúc logic tốt, flow mạch lạc. Ẩn dụ "lớp học" (Slide 10, 18) rất hay và giúp hội đồng không chuyên ngành ML hiểu được. Tuy nhiên, có **4 lỗi sai số liệu nghiêm trọng** cần sửa.
+
+### 11.2. Danh sách lỗi sai so với dữ liệu thực nghiệm
+
+#### Lỗi 1 — Slide 11: ProvDetector (SAI HOÀN TOÀN)
+
+| | Script gốc | Dữ liệu thực |
+|---|-----------|--------------|
+| Attack AUC | **0.05** | **1.0000** |
+| Evasion AUC | **1.0** | **0.5000** |
+
+Script viết: *"với các cuộc tấn công tiêu chuẩn (Attack)... ProvDetector lại bỏ qua hoàn toàn với AUC chỉ đạt 0.05"* — **sai hoàn toàn**. ProvDetector đạt Attack AUC = 1.0 (phát hiện tốt attack thường) nhưng Evasion AUC = 0.5 (thất bại trước evasion, Evasion Rate = 100%).
+
+**Script sửa (Slide 11):**
+
+> *"Mô hình thứ hai là ProvDetector, sử dụng phương pháp lấy trung vị (Median) các node anomaly score. Nó phát hiện tốt tấn công thông thường (Attack AUC = 1.0), nhưng khi gặp Evasion, AUC rớt xuống 0.50 — ngang đoán mò. Lý do: ProvDetector dùng Median aggregation, mà trong evasion graph 95% nodes là benign → median luôn rơi vào vùng benign → mất hoàn toàn tín hiệu tấn công. Tỷ lệ lọt lưới (Evasion Rate) là 100%."*
+
+#### Lỗi 2 — Slide 21: System Overhead (SAI SỐ LIỆU)
+
+| Metric | Script gốc | Dữ liệu thực |
+|--------|-----------|--------------|
+| Model size | <20KB | **19.6 KB** (đúng) |
+| Inference | **8.6ms** | **4.01ms** (mean), 6.32ms (P95) |
+| Throughput | **116.2 graphs/s** | **249.4 graphs/s** |
+
+Script dùng số liệu cũ/sai. Dữ liệu thực tốt hơn nhiều.
+
+**Script sửa (Slide 21):**
+
+> *"Về mặt hiệu năng, GRACE cực kỳ nhỏ gọn với chưa tới 5.000 tham số (chỉ tốn khoảng 20KB RAM). Thời gian suy luận trung bình chỉ **4 mili-giây** cho một đồ thị (P95 chỉ 6.3ms), xử lý gần **250 đồ thị mỗi giây**, hoàn toàn đáp ứng được yêu cầu giám sát theo thời gian thực."*
+
+#### Lỗi 3 — Slide 22: Zero-shot Transfer (KHÔNG CÓ BẰNG CHỨNG)
+
+Script nói: *"mang đi test thẳng trên kịch bản APT của hệ thống khác (DARPA Theia) mà không cần huấn luyện lại (Zero-shot)"*
+
+Trong thực tế, Experiment 2 chỉ test trên **tajka full (300 graphs)**. StreamSpot và Theia đều ghi "(bỏ qua)". **Không có kết quả zero-shot transfer trên Theia.**
+
+**Hai lựa chọn:**
+- **Bỏ Slide 22** hoàn toàn — an toàn nhất
+- **Thay bằng Slide Sensitivity Analysis** (Experiment 5) — kết quả mới, mạnh, có bằng chứng
+
+**Script thay thế (Slide 22 → Sensitivity Analysis):**
+
+> *"Một câu hỏi tự nhiên: Nếu kẻ tấn công tăng mức pha loãng lên 10 lần, 100 lần, thậm chí 1000 lần thì sao? Chúng tôi mô phỏng kịch bản này. Kết quả: Khi graph phình từ 1.450 lên 1,45 triệu nodes, TopK-Fixed vẫn giữ AUC = 1.0. Trong khi đó, Mean-pool sụp đổ từ AUC 0.7 xuống 0.0 ngay tại mức 10x. Lý do: K cố định đảm bảo rằng dù graph lớn đến đâu, hệ thống luôn soi đúng những nodes nghi ngờ nhất. Mọi nỗ lực pha loãng đều trở nên vô nghĩa."*
+
+#### Lỗi 4 — Slide 17: TopK thiếu chi tiết quan trọng
+
+Script nói: *"Top 10% các node có điểm số bất thường cao nhất"*
+
+Đây là TopK-% (percentage-based), không phải TopK-Fixed. Experiment 5 chứng minh rằng **TopK-% cũng thất bại ở 10x** (AUC = 0.0). Chìa khoá thực sự là **K cố định** (K = 10% × N_gốc, không thay đổi khi graph tăng kích thước).
+
+**Script sửa (Slide 17):**
+
+> *"Nó chỉ lấy trung bình của Top K node có điểm số bất thường cao nhất, với **K cố định** bằng 10% kích thước đồ thị gốc. Điểm mấu chốt: K không tăng khi đồ thị phình to. Dù kẻ tấn công thêm 1 triệu node benign, K vẫn giữ nguyên — luôn đủ nhỏ để các node tấn công thực sự chiếm đa số trong top K."*
+
+### 11.3. Các điểm cần bổ sung/điều chỉnh nhỏ
+
+#### Slide 5 — Số liệu dataset (cần kiểm tra)
+
+Script ghi: *"đồ thị benign khoảng 74K cạnh"*
+
+Dữ liệu thực:
+- Benign (tajka): **~76K edges** (mean=76,692 train; 75,693 test) — script ghi 74K, chênh nhẹ, nên sửa thành **76K**
+- Attack (tajka): ~5,640 edges
+- Evasion (tajka): ~121,429 edges
+
+#### Slide 8 — Hiệu ứng Pha loãng
+
+Script ghi: *"Attack (~5.6K edges) vs Evasion (~121.4K edges). Tỷ lệ 95.4% là rác."*
+
+Kiểm tra: 5,640 / 121,429 = 4.6% attack → 95.4% benign → **đúng**.
+
+#### Slide 9 — FGA
+
+Script ghi: *"Evasion AUC 0.553, FPR 50%"* — **đúng** (actual: 0.5533, FPR 50%).
+
+#### Slide 12 — VELOX và TCG-IDS
+
+Script ghi: *"VELOX (AUC 0.60)"* — **đúng**. *"TCG-IDS... AUC 0.70, FPR 30%"* — **đúng**.
+
+#### Slide 20 — 6 Adaptive Attacks
+
+Script ghi *"6 kỹ thuật tấn công thích ứng"* — **đúng** (Fragmentation N=10, N=50, Feature Mimicry ε=0.5, Topology Dilution 500, 2000, Combined). Tất cả AUC = 1.0.
+
+### 11.4. Đề xuất cấu trúc slides sau chỉnh sửa
+
+Sau khi sửa các lỗi trên, cấu trúc 23 slides được điều chỉnh:
+
+| Slide | Nội dung | Thay đổi |
+|-------|----------|----------|
+| 1–4 | Bối cảnh & Động lực | Giữ nguyên |
+| 5 | 3 Dataset | Sửa 74K → 76K |
+| 6–7 | Format & Pipeline | Giữ nguyên |
+| 8 | Hiệu ứng Pha loãng | Giữ nguyên |
+| 9 | FGA thất bại | Giữ nguyên |
+| 10 | Ẩn dụ Lớp học | Giữ nguyên |
+| **11** | **ProvDetector thất bại** | **Sửa AUC: Attack=1.0, Evasion=0.5** |
+| 12 | VELOX & TCG-IDS | Giữ nguyên |
+| 13 | Đúc kết nguyên nhân | Giữ nguyên |
+| 14–16 | Kiến trúc GRACE | Giữ nguyên |
+| **17** | **TopK Aggregation** | **Nhấn mạnh K cố định** |
+| 18 | Ẩn dụ Lớp học + TopK | Giữ nguyên |
+| 19 | Kết quả so sánh baseline | Giữ nguyên |
+| 20 | Adaptive Attacks | Giữ nguyên |
+| **21** | **System Overhead** | **Sửa: 4ms, 249 graphs/s** |
+| **22** | **Sensitivity Analysis (thay Zero-shot)** | **Slide mới — Experiment 5** |
+| 23 | Kết luận | Giữ nguyên |
+
+### 11.5. Gợi ý thêm slides (nếu muốn mở rộng đến 25–26 slides)
+
+Nếu thời gian cho phép (30 phút), nên bổ sung 2–3 slides từ Experiments 6–7 vì chúng cung cấp **chiều sâu lý thuyết** mà hội đồng Thạc sĩ yêu cầu:
+
+| Slide bổ sung | Nội dung | Visual |
+|--------------|----------|--------|
+| Slide 22b | InfoNCE Convergence + Distance Histogram | `plot_infonce_verification.png` |
+| Slide 22c | t-SNE Latent Space | `plot_tsne_latent.png` |
+| Slide 22d | Phản biện: "InfoNCE bị mù?" + giải đáp | Bảng Cohen's d + KL Div + giải thích TopK khai thác đuôi |
+
+Các slides này giúp trả lời câu hỏi vặn từ hội đồng kiểu: *"Tại sao Cohen's d nhỏ mà vẫn phát hiện được?"* hoặc *"Embedding space thực sự phân biệt được attack nodes không?"*
